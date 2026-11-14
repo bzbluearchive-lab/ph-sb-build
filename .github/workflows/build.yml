@@ -1,4 +1,4 @@
-name: build-arm64e
+﻿name: build-arm64e
 on:
   workflow_dispatch:
   push:
@@ -62,6 +62,16 @@ jobs:
           file PhantomSB.dylib
           otool -hv PhantomSB.dylib | head -4 || true
           shasum -a 256 PhantomSB.dylib
+
+      - name: Upload logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            /tmp/autogen.log
+            /tmp/conf.log
+            /tmp/make.log
 
       - uses: actions/upload-artifact@v4
         with:
