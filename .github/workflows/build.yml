@@ -1,4 +1,4 @@
-﻿name: build-arm64e
+name: build-arm64e
 on:
   workflow_dispatch:
   push:
@@ -10,78 +10,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build deps
+      - name: Install prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git autoconf automake libtool pkg-config libssl-dev libxml2-dev \
-            zlib1g-dev libedit-dev libncurses5-dev libblocksruntime-dev clang llvm-dev xz-utils file
+          sudo apt-get install -y --no-install-recommends bash curl sudo git make ca-certificates xz-utils file
 
-      - name: Cache ld64
-        id: ld64cache
-        uses: actions/cache@v4
-        with:
-          path: ~/cctools
-          key: ld64-home-v2-${{ runner.os }}
+      - name: Install Theos
+        run: |
+          export THEOS=$HOME/theos
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)" || true
+          ls -la $THEOS | head -20
+          ls $THEOS/toolchain 2>/dev/null | head -5
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
-      - name: Build ld64 (cctools-port)
-        if: steps.ld64cache.outputs.cache-hit != 'true'
+      - name: Build tweak (arm64e)
         run: |
           set -x
-          git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git /tmp/cp
-          cd /tmp/cp/cctools
-          # 试探 configure 支持哪些开关
-          ./autogen.sh > /tmp/autogen.log 2>&1 || true
-          ./configure --help > /tmp/confhelp.log 2>&1 || true 2>&1 || { tail -40 /tmp/autogen.log; exit 1; }
-          grep -i dispatch /tmp/confhelp.log || true
-          LLVMCONF=$(ls /usr/lib/llvm-*/bin/llvm-config | head -1)
-          ./configure --prefix="$HOME/cctools" --target=x86_64-apple-darwin11 --with-llvm-config="$LLVMCONF"  > /tmp/conf.log 2>&1 || { tail -50 /tmp/conf.log; exit 1; }
-          make -j"$(nproc)" ld64 > /tmp/make.log 2>&1 || { tail -60 /tmp/make.log; exit 1; }
-          BIN=$(find /tmp/cp/cctools -type f -name 'ld' -perm -u+x | head -1)
-          echo "BIN=$BIN"
-          mkdir -p "$HOME/cctools/bin"
-          cp "$BIN" "$HOME/cctools/bin/ld64"
-          chmod +x "$HOME/cctools/bin/ld64"
-          "$HOME/cctools/bin/ld64" -v | head -3
-
-      - name: Fetch iOS SDK
-        run: |
-          set -x
-          git clone --depth 1 https://github.com/theos/sdks.git /tmp/sdks
-          ls /tmp/sdks | head -10
-          SDK=$(ls -d /tmp/sdks/iPhoneOS*.sdk | sort -V | tail -1)
-          echo "SDK=$SDK" >> "$GITHUB_ENV"
-
-      - name: Compile + link arm64e dylib
-        run: |
-          set -x
-          clang++ -target arm64e-apple-ios15.0 -isysroot "$SDK" -O2 -fPIC -fobjc-arc -std=c++17 \
-            -Wno-everything -c -o /tmp/probe.o payload/phantomsb_probe.mm
-          file /tmp/probe.o
-          "$HOME/cctools/bin/ld64" -arch arm64e -dylib -o PhantomSB.dylib /tmp/probe.o \
-            -syslibroot "$SDK" -platform_version ios 15.0 16.5 \
-            -L"$SDK/usr/lib" -lSystem -lobjc -lc++ -lc++abi \
-            -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics
-          file PhantomSB.dylib
-          otool -hv PhantomSB.dylib | head -4 || true
+          make clean || true
+          make FINALPACKAGE=1 ARCHS=arm64e 2>&1 | tail -40
+          find .theos -name '*.dylib' | head -5
+          DYLIB=$(find .theos -name 'PhantomSB.dylib' | head -1)
+          echo "DYLIB=$DYLIB"
+          file "$DYLIB"
+          cp "$DYLIB" PhantomSB.dylib
           shasum -a 256 PhantomSB.dylib
-
-      - name: Upload logs (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            /tmp/autogen.log
-            /tmp/confhelp.log
-            /tmp/conf.log
-            /tmp/make.log
 
       - uses: actions/upload-artifact@v4
         with:
           name: PhantomSB
           path: PhantomSB.dylib
 
-
-
-
+      - name: Upload build logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            .theos
