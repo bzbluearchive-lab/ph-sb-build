@@ -1,4 +1,4 @@
-name: build-arm64e
+﻿name: build-arm64e
 on:
   workflow_dispatch:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
