@@ -30,9 +30,12 @@ jobs:
           set -x
           git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git /tmp/cp
           cd /tmp/cp/cctools
-          ./autogen.sh > /tmp/autogen.log 2>&1 || { tail -40 /tmp/autogen.log; exit 1; }
+          # 试探 configure 支持哪些开关
+          ./autogen.sh > /tmp/autogen.log 2>&1 || true
+          ./configure --help > /tmp/confhelp.log 2>&1 || true 2>&1 || { tail -40 /tmp/autogen.log; exit 1; }
+          grep -i dispatch /tmp/confhelp.log || true
           LLVMCONF=$(ls /usr/lib/llvm-*/bin/llvm-config | head -1)
-          ./configure --prefix="$HOME/cctools" --target=x86_64-apple-darwin11 --with-llvm-config="$LLVMCONF" > /tmp/conf.log 2>&1 || { tail -50 /tmp/conf.log; exit 1; }
+          ./configure --prefix="$HOME/cctools" --target=x86_64-apple-darwin11 --with-llvm-config="$LLVMCONF"  > /tmp/conf.log 2>&1 || { tail -50 /tmp/conf.log; exit 1; }
           make -j"$(nproc)" ld64 > /tmp/make.log 2>&1 || { tail -60 /tmp/make.log; exit 1; }
           BIN=$(find /tmp/cp/cctools -type f -name 'ld' -perm -u+x | head -1)
           echo "BIN=$BIN"
@@ -70,6 +73,7 @@ jobs:
           name: build-logs
           path: |
             /tmp/autogen.log
+            /tmp/confhelp.log
             /tmp/conf.log
             /tmp/make.log
 
@@ -77,3 +81,7 @@ jobs:
         with:
           name: PhantomSB
           path: PhantomSB.dylib
+
+
+
+
