@@ -1,0 +1,42 @@
+name: build-arm64e
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build arm64e dylib
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos clang++ \
+            -target arm64e-apple-ios15.0 \
+            -isysroot "$SDK" \
+            -O2 -fPIC -fobjc-arc -std=c++17 \
+            -dynamiclib \
+            -install_name @rpath/PhantomSB.dylib \
+            -o PhantomSB.dylib \
+            payload/phantomsb_probe.mm \
+            -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics
+
+      - name: Ad-hoc sign + verify
+        run: |
+          codesign -s - -f PhantomSB.dylib
+          otool -hv PhantomSB.dylib | head -5
+          codesign -dv PhantomSB.dylib 2>&1 | head -8
+          shasum -a 256 PhantomSB.dylib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhantomSB
+          path: PhantomSB.dylib
