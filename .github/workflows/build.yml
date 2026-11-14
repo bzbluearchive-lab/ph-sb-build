@@ -1,4 +1,4 @@
-﻿name: build-arm64e
+name: build-arm64e
 on:
   workflow_dispatch:
   push:
@@ -10,34 +10,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show toolchain
+      - name: Install build deps
         run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
-          xcrun --sdk iphoneos --show-sdk-version
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git autoconf automake libtool pkg-config libssl-dev libxml2-dev \
+            zlib1g-dev libedit-dev libncurses5-dev libblocksruntime-dev clang llvm-dev xz-utils
 
-      - name: Build arm64e dylib
+      - name: Cache ld64
+        id: ld64cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/cctools
+          key: ld64-cctools-877-${{ runner.os }}
+
+      - name: Build ld64 (cctools-port)
+        if: steps.ld64cache.outputs.cache-hit != 'true'
         run: |
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          xcrun --sdk iphoneos clang++ \
-            -target arm64e-apple-ios15.0 \
-            -isysroot "$SDK" \
-            -O2 -fPIC -fobjc-arc -std=c++17 \
-            -dynamiclib \
-            -install_name @rpath/PhantomSB.dylib \
-            -o PhantomSB.dylib \
-            payload/phantomsb_probe.mm \
+          git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git /tmp/cctools-port
+          cd /tmp/cctools-port/cctools
+          ./autogen.sh
+          ./configure --prefix=/opt/cctools --target=x86_64-apple-darwin11 \
+            --with-llvm-config=$(ls /usr/lib/llvm-*/bin/llvm-config | head -1)
+          make -j"$(nproc)" ld64
+          BIN=$(find /tmp/cctools-port/cctools -type f -name 'ld' -perm -u+x | head -1)
+          sudo mkdir -p /opt/cctools/bin
+          sudo cp "$BIN" /opt/cctools/bin/ld64
+          sudo chmod +x /opt/cctools/bin/ld64
+          /opt/cctools/bin/ld64 -v | head -3
+
+      - name: Fetch iOS SDK (theos/sdks)
+        run: |
+          mkdir -p /tmp/sdk && cd /tmp/sdk
+          curl -L -o sdk.tar.xz https://github.com/theos/sdks/releases/download/master/iPhoneOS16.5.sdk.tar.xz || \
+          curl -L -o sdk.tar.xz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
+          ls -la
+          if file sdk.tar.xz | grep -q XZ; then tar -xJf sdk.tar.xz; else tar -xzf sdk.tar.xz; fi
+          ls -d /tmp/sdk/iPhoneOS*.sdk | head -3
+
+      - name: Compile + link arm64e dylib
+        run: |
+          SDK=$(ls -d /tmp/sdk/iPhoneOS*.sdk | head -1)
+          echo "SDK=$SDK"
+          clang++ -target arm64e-apple-ios15.0 -isysroot "$SDK" -O2 -fPIC -fobjc-arc -std=c++17 \
+            -Wno-everything -c -o /tmp/probe.o payload/phantomsb_probe.mm
+          file /tmp/probe.o
+          /opt/cctools/bin/ld64 -arch arm64e -dylib -o PhantomSB.dylib /tmp/probe.o \
+            -syslibroot "$SDK" -platform_version ios 15.0 16.5 \
+            -L"$SDK/usr/lib" -lSystem -lobjc -lc++ -lc++abi \
             -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics
-
-      - name: Ad-hoc sign + verify
-        run: |
-          codesign -s - -f PhantomSB.dylib
-          otool -hv PhantomSB.dylib | head -5
-          codesign -dv PhantomSB.dylib 2>&1 | head -8
+          file PhantomSB.dylib
+          otool -hv PhantomSB.dylib 2>/dev/null | head -4 || true
           shasum -a 256 PhantomSB.dylib
 
       - uses: actions/upload-artifact@v4
         with:
           name: PhantomSB
           path: PhantomSB.dylib
-
